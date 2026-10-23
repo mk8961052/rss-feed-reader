@@ -60,14 +60,14 @@ After developing a successful Extended-MVP app, the following features could be 
 
 **For MVP (subscription management only):**
 
-- Use simple in-memory storage (List in C#)
+- Use simple in-memory storage (a thread-safe collection in a Spring bean)
 - No need for feed parsing libraries yet
 - No HTTP client needed for MVP
 - Focus on basic UI and state management
 
 **For Extended-MVP (add feed fetching):**
 
-- Use `System.ServiceModel.Syndication` for parsing
+- Use ROME (`com.rometools:rome`) for parsing
 - Test with known-good feeds (e.g., <https://devblogs.microsoft.com/dotnet/feed/>)
 - Avoid complex parsing edge cases - handle basic RSS/Atom formats only
 

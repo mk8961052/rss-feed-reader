@@ -5,52 +5,64 @@ API details: [contracts/subscriptions-api.md](contracts/subscriptions-api.md).
 
 ## Prerequisites
 
-- **.NET 10 SDK** (`dotnet --list-sdks` must show `10.0.x`). The repo's `global.json` pins it.
-  At the time of planning, only SDK 6.0.400 was installed. Install .NET 10 first.
+- **JDK 17+** (`java -version`). Maven doesn't need to be installed, because the backend uses
+  `mvnw`.
+- **Node.js 24+** (`node -v`) and npm.
 - A modern browser with DevTools (F12).
 
-## 1. Build, format and test gates
+Commands below use PowerShell on Windows (`.\mvnw.cmd`). On macOS/Linux, use `./mvnw`.
+
+## 1. Backend gate
 
 ```powershell
-dotnet build RSSFeedReader.slnx            # expect: 0 warnings, 0 errors
-dotnet format RSSFeedReader.slnx --verify-no-changes
-dotnet test RSSFeedReader.slnx             # expect: all tests pass
+cd backend
+.\mvnw.cmd verify      # compile (-Xlint:all, no warnings), Spotless check, Enforcer, all tests
 ```
 
-## 2. Template cleanup gate (must pass before any UI work)
+## 2. Frontend gates
 
 ```powershell
-Get-ChildItem frontend/RSSFeedReader.UI/Pages -Filter *.razor | Select-Object Name
+cd frontend
+npm ci
+npm run lint           # oxlint --deny-warnings
+npm run format:check
+npm run typecheck
+npm test               # Vitest, run mode
+npm run build
 ```
 
-Expected: only `NotFound.razor` and `Subscriptions.razor`. `Home`, `Counter` and `Weather`
-are gone. Exactly one file contains `@page "/"`:
+## 3. Template cleanup gate (must pass before any UI work)
 
 ```powershell
-Select-String -Path frontend/RSSFeedReader.UI/Pages/*.razor -Pattern '@page "/"'
+$p = 'count is','get started','hero.png','react.svg','vite.svg','icons.svg'
+Get-ChildItem frontend/src -Recurse -File | Select-String -Pattern $p
+Select-String -Path frontend/index.html -Pattern $p
 ```
 
-## 3. Run
+Expected: **no output** (Select-String is case-insensitive). `frontend/src/assets/` and
+`frontend/public/icons.svg` don't exist.
+
+## 4. Run
 
 In two terminals:
 
 ```powershell
-dotnet run --project backend/RSSFeedReader.Api      # listens on http://localhost:5151
-dotnet run --project frontend/RSSFeedReader.UI      # serves http://localhost:5213
+cd backend;  .\mvnw.cmd spring-boot:run     # http://localhost:8080
+cd frontend; npm run dev                    # http://localhost:5173
 ```
 
 Run gate checks:
 
-- [ ] `http://localhost:5151/api/subscriptions` in a browser returns `[]`
-- [ ] `frontend/RSSFeedReader.UI/wwwroot/appsettings.json` has `"ApiBaseUrl": "http://localhost:5151/api/"`
-- [ ] Opening `http://localhost:5213` shows no CORS or connection errors in the DevTools console
+- [ ] `http://localhost:8080/api/subscriptions` in a browser returns `[]`
+- [ ] `frontend/.env` contains `VITE_API_BASE_URL=http://localhost:8080/api/`
+- [ ] Opening `http://localhost:5173` shows no CORS or connection errors in the DevTools console
 
-## 4. Manual acceptance scenarios (open `http://localhost:5213`)
+## 5. Manual acceptance scenarios (open `http://localhost:5173`)
 
 | # | Action | Expected | Spec ref |
 |---|--------|----------|----------|
-| 1 | Load the page with no data | "No subscriptions yet" message | US2-1, FR-008 |
-| 2 | Paste `https://devblogs.microsoft.com/dotnet/feed/`, click **Add** | Appears in the list within 1 s, no reload, input cleared | US1-1, SC-002 |
+| 1 | Load the page with no data | "No subscriptions yet" | US2-1, FR-008 |
+| 2 | Paste `https://devblogs.microsoft.com/dotnet/feed/`, click **Add** | Appears within 1 s, no reload, input cleared | US1-1, SC-002 |
 | 3 | Type `https://example.com/feed`, press **Enter** | Added below the first entry | US1-2, US1-3 |
 | 4 | Add `   https://example.org/rss   ` | Shown without the spaces | US1-4 |
 | 5 | Click **Add** with an empty input | "Enter a feed address." and the list is unchanged | US3-1 |
@@ -59,17 +71,17 @@ Run gate checks:
 | 8 | Add `https://example.com/?q=<b>x</b>` | Shown literally with `<b>`, not bold | FR-009 |
 | 9 | Refresh the browser (F5) | The same list is still shown | US2-3, FR-010 |
 | 10 | Stop the backend, then try to add | "Could not add the subscription. Please try again." | US3-4, FR-011 |
-| 11 | Restart the backend, reload | The list is empty (expected MVP behavior) | Edge case |
+| 11 | Restart the backend, reload | "No subscriptions yet" (expected MVP behavior) | Edge case |
 | 12 | Double-click **Add** quickly on a new URL | Exactly one entry added | FR-012 |
 
-## 5. API spot-checks (optional)
+## 6. API spot-checks (optional)
 
 ```powershell
-$api = "http://localhost:5151/api/subscriptions"
+$api = "http://localhost:8080/api/subscriptions"
 Invoke-RestMethod $api -Method Post -ContentType application/json -Body '{"url":"https://example.net/feed"}'
-Invoke-RestMethod $api                               # list, oldest first
-try { Invoke-RestMethod $api -Method Post -ContentType application/json -Body '{"url":"ftp://x"}' } catch { $_.Exception.Response.StatusCode }   # BadRequest
+Invoke-RestMethod $api                                   # list, oldest first
+1..100 | % { Invoke-RestMethod $api -Method Post -ContentType application/json -Body "{`"url`":`"https://example.com/feed/$_`"}" } | Out-Null   # scale check (SC-004)
 ```
 
-The MVP is **accepted** when sections 1–4 all pass (Constitution: Development Workflow &
-Quality Gates, items 1–5).
+The MVP is **accepted** when sections 1–5 all pass (Constitution: Development Workflow &
+Quality Gates).

@@ -1,0 +1,32 @@
+.add-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.add-form input {
+  flex: 1 1 20rem;
+  padding: 0.4rem 0.5rem;
+  font: inherit;
+}
+
+.add-form button {
+  padding: 0.4rem 1rem;
+  font: inherit;
+}
+
+.error {
+  color: #b00020;
+}
+
+.subscription-list {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-left: 1.25rem;
+}
+
+.subscription-list li {
+  overflow-wrap: anywhere;
+}

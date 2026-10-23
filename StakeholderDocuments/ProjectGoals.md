@@ -55,7 +55,7 @@ Before testing the MVP, verify:
 
 - [ ] Backend runs without errors and listens on the configured port
 - [ ] Frontend runs without errors and loads in the browser
-- [ ] Frontend configuration (`wwwroot/appsettings.json`) points to the correct backend URL
+- [ ] Frontend configuration (`frontend/.env`, `VITE_API_BASE_URL`) points to the correct backend URL
 - [ ] Backend CORS allows the frontend origin
 - [ ] Browser DevTools console shows no connection errors when loading the page
 
@@ -73,7 +73,7 @@ Once the Extended-MVP is working (subscription management + feed fetching + item
 
 ## Technology selection note
 
-While this MVP is intentionally simple, the technology choices (ASP.NET Core + Blazor) should support future production-ready features without requiring a complete rewrite. The architecture allows for adding persistence, background operations, and enhanced UI capabilities as needed.
+While this MVP is intentionally simple, the technology choices (Spring Boot + React) should support future production-ready features without requiring a complete rewrite. The architecture allows for adding persistence, background operations, and enhanced UI capabilities as needed.
 
 ## How this document fits with the others
 

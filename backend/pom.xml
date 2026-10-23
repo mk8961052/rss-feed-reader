@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>org.springframework.boot</groupId>
+		<artifactId>spring-boot-starter-parent</artifactId>
+		<version>4.1.2</version>
+		<relativePath/> <!-- lookup parent from repository -->
+	</parent>
+	<groupId>com.rssfeedreader</groupId>
+	<artifactId>rss-feed-reader-api</artifactId>
+	<version>0.0.1-SNAPSHOT</version>
+	<name>rss-feed-reader-api</name>
+	<description>RSS Feed Reader MVP - subscription management REST API</description>
+	<properties>
+		<java.version>17</java.version>
+		<spotless.version>3.10.4</spotless.version>
+		<!-- 1.28.0 is the newest google-java-format that runs on JDK 17; newer releases need JDK 21 -->
+		<google-java-format.version>1.28.0</google-java-format.version>
+	</properties>
+	<dependencies>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-webmvc</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-webmvc-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<configuration>
+					<failOnWarning>true</failOnWarning>
+					<compilerArgs>
+						<arg>-Xlint:all</arg>
+					</compilerArgs>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-enforcer-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>enforce</id>
+						<phase>validate</phase>
+						<goals>
+							<goal>enforce</goal>
+						</goals>
+						<configuration>
+							<rules>
+								<requireJavaVersion>
+									<version>[17,)</version>
+								</requireJavaVersion>
+								<requireMavenVersion>
+									<version>[3.9,)</version>
+								</requireMavenVersion>
+								<dependencyConvergence/>
+								<banDuplicatePomDependencyVersions/>
+							</rules>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>com.diffplug.spotless</groupId>
+				<artifactId>spotless-maven-plugin</artifactId>
+				<version>${spotless.version}</version>
+				<configuration>
+					<java>
+						<googleJavaFormat>
+							<version>${google-java-format.version}</version>
+						</googleJavaFormat>
+						<removeUnusedImports/>
+					</java>
+				</configuration>
+				<executions>
+					<execution>
+						<goals>
+							<goal>check</goal>
+						</goals>
+						<phase>verify</phase>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+
+</project>

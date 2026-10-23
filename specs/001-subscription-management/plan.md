@@ -1,47 +1,62 @@
 # Implementation Plan: Feed Subscription Management (MVP)
 
-**Branch**: `001-subscription-management` | **Date**: 2026-10-23 | **Spec**: [spec.md](spec.md)
+**Branch**: `001-subscription-management` | **Date**: 2026-10-24 | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `/specs/001-subscription-management/spec.md`
 
-**Delivery Phase**: MVP (Constitution Principle I)
+**Delivery Phase**: MVP (Constitution v2.0.0, Principle I)
 
 ## Summary
 
-Let a single local user add RSS/Atom feed subscriptions by URL and see them listed. An
-ASP.NET Core Minimal API (`backend/RSSFeedReader.Api`) exposes `GET` and `POST
-/api/subscriptions`. It validates URL structure (absolute `http`/`https`, ≤ 2048 chars),
-rejects duplicates by normalized URL, and stores subscriptions in a thread-safe in-memory
-singleton behind `ISubscriptionStore`. A standalone Blazor WebAssembly app
-(`frontend/RSSFeedReader.UI`) provides one page at `/` with an input, an Add button (Enter
-also submits) and the list. It calls the API through a small client service and always
-re-reads the list from the API. No feed fetching or parsing (Extended-MVP).
+Let a single local user add RSS/Atom feed subscriptions by URL and see them listed. A Spring
+Boot 4.1 REST API (`backend/`) exposes `GET` and `POST /api/subscriptions`. It:
+
+- validates URL structure (absolute `http`/`https` with a host, ≤ 2048 chars, parsed
+  browser-style)
+- rejects duplicates by normalized URL
+- stores subscriptions in a thread-safe in-memory singleton behind `SubscriptionStore`
+- returns RFC 9457 `ProblemDetail` errors
+
+A React 19 + Vite SPA (`frontend/`) provides one page with an input, an Add button (Enter also
+submits) and the list. It talks to the API only through a typed API module and always re-reads
+the list from the API. There is no feed fetching or parsing (that's Extended-MVP).
 
 ## Technical Context
 
-**Language/Version**: C# on .NET 10 (LTS), SDK pinned via `global.json` (research R1)
+**Language/Version**: Java 17 (backend), TypeScript (frontend, version pinned by the
+create-vite `react-ts` template)
 
-**Primary Dependencies**: ASP.NET Core Minimal APIs; Blazor WebAssembly (standalone). No
-additional NuGet packages in the app projects. Tests: xUnit, `Microsoft.AspNetCore.Mvc.Testing`.
+**Primary Dependencies**:
+- Backend: Spring Boot 4.1.2 (`spring-boot-starter-webmvc`)
+- Frontend: React 19 and Vite
+- Build/quality: Maven Wrapper, Spotless (google-java-format 1.28.0), Maven Enforcer,
+  oxlint (shipped by create-vite 9), Prettier
 
-**Storage**: In-memory singleton (`InMemorySubscriptionStore`, lock-guarded), lost on API
-restart (FR-010)
+**Storage**: An in-memory singleton bean (`InMemorySubscriptionStore`, guarded by a
+`ReentrantLock`). Data is lost when the JVM restarts (FR-010).
 
-**Testing**: xUnit unit and integration tests (`WebApplicationFactory<Program>`) in
-`tests/RSSFeedReader.Api.Tests`. Manual UI validation via [quickstart.md](quickstart.md).
+**Testing**: JUnit 5 + AssertJ + MockMvc (`spring-boot-starter-webmvc-test`) for the backend;
+Vitest (node environment) for the frontend API module. The UI is validated manually via
+[quickstart.md](quickstart.md).
 
-**Target Platform**: Local development on Windows, macOS and Linux. API on Kestrel
-`http://localhost:5151`. UI on `http://localhost:5213` / `https://localhost:7025`.
+**Target Platform**: Local development on Windows, macOS and Linux. API on
+`http://localhost:8080`; UI on the Vite dev server at `http://localhost:5173`.
 
-**Project Type**: Web application (separate backend API and WebAssembly frontend)
+**Project Type**: Web application (separate backend API and SPA frontend)
 
 **Performance Goals**: An added subscription is visible within 1 s (SC-002), and this holds
-with 100+ subscriptions (SC-004). Both are trivially met in memory.
+with 100+ subscriptions (SC-004). Both are trivial in memory.
 
-**Constraints**: No feed fetching, parsing or persistence (FR-013, Principle I). URL ≤ 2048
-chars. No exception details sent to the client. CORS limited to explicit origins.
+**Constraints**:
+- No outbound HTTP, feed parsing or persistence (FR-013, Principle I).
+- URL ≤ 2048 chars.
+- No exception details sent to the client.
+- CORS limited to explicit origins on `/api/**`.
 
-**Scale/Scope**: 1 user, 1 page, 2 endpoints, roughly hundreds of subscriptions at most
+**Scale/Scope**: 1 user, 1 page, 2 endpoints, at most a few hundred subscriptions
+
+**Environment check (2026-10-24)**: Zulu JDK 17.0.10, Maven 3.9.12 and Node 24.13.1 are
+installed, so no installs are needed.
 
 ## Constitution Check
 
@@ -49,13 +64,13 @@ chars. No exception details sent to the client. CORS limited to explicit origins
 
 | Principle | Gate | Pre-design | Post-design |
 |-----------|------|------------|-------------|
-| I. Phase-Gated Scope | Feature is labeled MVP; no `HttpClient` feed fetching, Syndication, EF Core or background services; every package is traceable | ✅ | ✅ The OpenAPI package is dropped (R3); only test packages are added |
-| II. Untrusted Input, Safe Output | Backend rejects empty, > 2048 or non-http(s) URLs with 400 `ProblemDetails`; UI shows the message; no `MarkupString`; no exception leakage | ✅ | ✅ Validator (R5), ProblemDetails plus exception handler (R7), encoded text rendering with no links (R10) |
+| I. Phase-Gated Scope | Labeled MVP. No `RestClient`/HTTP client, ROME, JPA or `@Scheduled`. Every dependency is traceable | ✅ | ✅ Backend has only the webmvc starter and its test starter (R2). Frontend adds only Prettier and Vitest to the template (R14) |
+| II. Untrusted Input, Safe Output | 400 `ProblemDetail` for blank, > 2048 or non-http(s)/hostless URLs; UI shows `detail`; no `dangerouslySetInnerHTML`; `server.error.*` hardened; catch-all advice | ✅ | ✅ Lenient WHATWG parse (R5), `ApiExceptionHandler` (R7), escaped text with no links (R13) |
 | III. Safe Outbound Fetching | Applies from Extended-MVP | N/A | N/A (no outbound calls) |
-| IV. Swappable Boundaries | API is the source of truth; `/api/` JSON DTOs; `ISubscriptionStore` singleton, thread-safe; component calls go through an injected client service | ✅ | ✅ Lock-guarded store (R6), DTO mapping excludes `NormalizedUrl`, UI re-GETs after POST (R9) |
-| V. Code Quality | Nullable, warnings as errors, analyzers, `dotnet format`; async; no magic values; xUnit tests for validator and store | ✅ | ✅ `Directory.Build.props` (R13); limits and messages as named constants; ports and origins in config (R11); test plan (R12) |
-| Tech constraints | `global.json` pin; layout `backend/`, `frontend/`, `tests/`; single solution; config-driven `ApiBaseUrl` and CORS | ✅ | ✅ |
-| Workflow gates | Template cleanup gate; build/format/test/run gates; MVP acceptance | ✅ | ✅ Encoded in [quickstart.md](quickstart.md) |
+| IV. Swappable Boundaries | API is the source of truth; `/api/` DTO records; `SubscriptionStore` singleton, thread-safe; thin controller; single TS API module | ✅ | ✅ Lock-guarded store (R6), service plus exceptions (R4), `subscriptionsApi.ts` (R11), re-GET after POST |
+| V. Code Quality | `-Xlint:all` + `failOnWarning`; Spotless; `@NullMarked` packages; Enforcer; constructor injection; TS strict; oxlint `--deny-warnings`; Prettier; JUnit tests for validator and store; Vitest for API mapping | ✅ | ✅ R10, R14, R15; messages, limits and ports are constants or config |
+| Tech constraints | Java 17 / Boot 4.1.x / mvnw; Node 24 pinned; ports 8080/5173; `VITE_API_BASE_URL` fails fast; `app.cors.allowed-origins` | ✅ | ✅ R1, R9, R11 |
+| Workflow gates | Vite template cleanup gate; backend gate; frontend gates; run gate; MVP acceptance | ✅ | ✅ Encoded in [quickstart.md](quickstart.md) |
 
 **Result**: PASS, with no violations and no Complexity Tracking entries.
 
@@ -66,70 +81,84 @@ chars. No exception details sent to the client. CORS limited to explicit origins
 ```text
 specs/001-subscription-management/
 ├── plan.md              # This file
-├── research.md          # Phase 0: decisions R1–R13
-├── data-model.md        # Phase 1: entity, validation and DTOs
-├── quickstart.md        # Phase 1: build/run/acceptance guide
+├── research.md          # Phase 0: decisions R1–R15
+├── data-model.md        # Phase 1: entity, validation, store, DTOs
+├── quickstart.md        # Phase 1: gates, run and acceptance guide
 ├── contracts/
 │   └── subscriptions-api.md   # Phase 1: HTTP + UI behavior contract
 ├── checklists/
 │   └── requirements.md  # Spec quality checklist
-└── tasks.md             # Phase 2 (/speckit-tasks, not created here)
+└── tasks.md             # Phase 2 (/speckit-tasks)
 ```
 
 ### Source Code (repository root)
 
 ```text
-global.json                      # SDK pin 10.0.100, rollForward latestFeature
-Directory.Build.props            # Nullable, ImplicitUsings, TreatWarningsAsErrors, AnalysisLevel
-.editorconfig                    # Single style authority
-RSSFeedReader.slnx               # All three projects
+.gitignore                         # target/, node_modules/, dist/, IDE files, *.local
 
-backend/RSSFeedReader.Api/
-├── Program.cs                   # DI, ProblemDetails, exception handler, CORS, MapSubscriptionEndpoints
-├── appsettings.json             # Cors:AllowedOrigins
-├── Properties/launchSettings.json   # http://localhost:5151
-├── Contracts/
-│   ├── AddSubscriptionRequest.cs
-│   └── SubscriptionResponse.cs
-├── Domain/
-│   └── Subscription.cs          # sealed record
-├── Validation/
-│   └── SubscriptionUrlValidator.cs  # pure; MaxUrlLength = 2048, message constants
-├── Storage/
-│   ├── ISubscriptionStore.cs
-│   ├── AddResult.cs
-│   └── InMemorySubscriptionStore.cs # singleton, lock-guarded
-└── Endpoints/
-    └── SubscriptionEndpoints.cs # MapGroup("/api/subscriptions"): GET, POST
+backend/                           # Spring Boot 4.1.2, Java 17, Maven Wrapper
+├── mvnw, mvnw.cmd, .mvn/wrapper/
+├── pom.xml                        # webmvc starter + test starter; compiler -Xlint:all/failOnWarning; Spotless; Enforcer
+└── src/
+    ├── main/
+    │   ├── java/com/rssfeedreader/
+    │   │   ├── RssFeedReaderApplication.java
+    │   │   ├── package-info.java                 # @NullMarked (every package has one)
+    │   │   ├── config/
+    │   │   │   ├── ClockConfig.java              # Clock.systemUTC() bean
+    │   │   │   ├── CorsProperties.java           # @ConfigurationProperties("app.cors") record, non-empty
+    │   │   │   └── WebConfig.java                # WebMvcConfigurer: CORS on /api/**
+    │   │   ├── web/
+    │   │   │   └── ApiExceptionHandler.java      # @RestControllerAdvice → ProblemDetail 400/409/500
+    │   │   └── subscription/
+    │   │       ├── Subscription.java             # record (id, url, normalizedUrl, addedAt)
+    │   │       ├── SubscriptionStore.java        # interface
+    │   │       ├── InMemorySubscriptionStore.java# @Repository, ReentrantLock
+    │   │       ├── SubscriptionUrlValidator.java # pure, static validate()
+    │   │       ├── UrlValidationResult.java
+    │   │       ├── SubscriptionService.java      # @Service: validate → create → addIfAbsent
+    │   │       ├── InvalidSubscriptionUrlException.java
+    │   │       ├── DuplicateSubscriptionException.java
+    │   │       ├── AddSubscriptionRequest.java   # record DTO
+    │   │       ├── SubscriptionResponse.java     # record DTO, from(Subscription)
+    │   │       └── SubscriptionController.java   # @RestController /api/subscriptions GET, POST
+    │   └── resources/
+    │       └── application.yml                   # server.port, app.cors, problemdetails, server.error.*
+    └── test/java/com/rssfeedreader/subscription/
+        ├── SubscriptionUrlValidatorTest.java
+        ├── InMemorySubscriptionStoreTest.java
+        ├── SubscriptionServiceTest.java
+        ├── SubscriptionControllerTest.java       # @SpringBootTest + MockMvc, @DirtiesContext
+        └── CorsTest.java                         # (in com.rssfeedreader.config)
 
-frontend/RSSFeedReader.UI/
-├── Program.cs                   # HttpClient BaseAddress from ApiBaseUrl; SubscriptionsApiClient
-├── wwwroot/appsettings.json     # ApiBaseUrl = http://localhost:5151/api/
-├── Properties/launchSettings.json   # http 5213, https 7025
-├── Models/
-│   ├── AddSubscriptionRequest.cs
-│   └── SubscriptionResponse.cs
-├── Services/
-│   ├── SubscriptionsApiClient.cs
-│   └── AddSubscriptionResult.cs # Success | Rejected(message) | Unavailable
-├── Pages/
-│   ├── Subscriptions.razor      # @page "/"
-│   └── NotFound.razor           # kept from template
-└── Layout/
-    └── NavMenu.razor            # single "Subscriptions" link
-    # Removed: Pages/Home.razor, Pages/Counter.razor, Pages/Weather.razor, wwwroot/sample-data/
-
-tests/RSSFeedReader.Api.Tests/
-├── Validation/SubscriptionUrlValidatorTests.cs
-├── Storage/InMemorySubscriptionStoreTests.cs
-└── Endpoints/SubscriptionEndpointsTests.cs  # WebApplicationFactory<Program>: 201/400/409/GET/CORS
+frontend/                          # Vite react-ts template, cleaned
+├── .env                           # VITE_API_BASE_URL=http://localhost:8080/api/
+├── .nvmrc                         # 24
+├── .prettierrc.json, .prettierignore
+├── index.html                     # title "RSS Feed Reader"
+├── package.json                   # scripts: dev, build, lint, format, format:check, typecheck, test; engines.node >=24
+├── vite.config.ts                 # server.port 5173, strictPort; vitest environment node
+├── .oxlintrc.json                 # from template
+└── src/
+    ├── main.tsx
+    ├── App.tsx                    # renders <SubscriptionsPage />
+    ├── index.css                  # minimal base styles
+    ├── config.ts                  # apiBaseUrl from import.meta.env, fail fast
+    ├── vite-env.d.ts              # typed ImportMetaEnv.VITE_API_BASE_URL
+    ├── api/
+    │   ├── subscriptionsApi.ts    # types + createSubscriptionsApi(baseUrl, fetchFn)
+    │   └── subscriptionsApi.test.ts
+    └── components/
+        ├── SubscriptionsPage.tsx
+        └── SubscriptionsPage.css
+    # Removed: src/assets/ (hero.png, react.svg, vite.svg), public/icons.svg, App.css, README.md, demo markup
 ```
 
-**Structure Decision**: Web application layout as mandated by the constitution (Technology &
-Configuration Constraints): `backend/RSSFeedReader.Api`, `frontend/RSSFeedReader.UI`, and one
-test project under `tests/`, all in `RSSFeedReader.slnx`. There is no shared contracts project
-in the MVP: the DTOs are duplicated (research R4) and guarded by integration tests.
-`Program` in the API needs `public partial class Program;` so `WebApplicationFactory` can see it.
+**Structure Decision**: Two top-level apps, as mandated by Constitution v2.0.0: `backend/` (a
+single Maven module with package root `com.rssfeedreader`, tests under Maven's
+`src/test/java`) and `frontend/` (a Vite app with colocated tests). No shared code. The DTO
+shape is guarded by backend MockMvc tests and the frontend Vitest mapping tests against
+[the contract](contracts/subscriptions-api.md).
 
 ## Complexity Tracking
 
