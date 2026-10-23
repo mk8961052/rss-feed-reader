@@ -1,0 +1,17 @@
+# Backend (Maven)
+backend/target/
+
+# Frontend (Vite)
+frontend/node_modules/
+frontend/dist/
+*.local
+
+# IDE / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

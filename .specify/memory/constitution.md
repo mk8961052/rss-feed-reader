@@ -1,3 +1,44 @@
+<!--
+Sync Impact Report
+==================
+Version change: 1.0.0 → 2.0.0
+Bump rationale: MAJOR. The technology stack changed from ASP.NET Core + Blazor WebAssembly to
+Spring Boot (Java) + React/Vite (TypeScript). Every .NET-specific mechanic mandated by
+Principles II–V and the Technology/Workflow sections has been redefined with a Java or
+TypeScript equivalent. Code written against v1.0.0 cannot comply with v2.0.0.
+
+Modified principles (titles unchanged; mechanics redefined):
+  - I. Phase-Gated Scope: forbidden-in-MVP list is now RestClient/HttpClient, ROME, JPA, @Scheduled
+  - II. Untrusted Input, Safe Output: java.net.URI checks; Spring ProblemDetail; React rendering
+    rules (no dangerouslySetInnerHTML); server.error.* hardening
+  - III. Safe Outbound Fetching: RestClient via injected RestClient.Builder; manual redirect
+    handling; ROME with doctypes disallowed / secure DocumentBuilderFactory
+  - IV. Swappable Boundaries: SubscriptionStore interface + Spring singleton bean; React API module
+  - V. Strict, Verifiable Code Quality: javac -Xlint -Werror, Spotless, JSpecify @NullMarked,
+    Maven Enforcer; TypeScript strict, template linter (oxlint) --deny-warnings, Prettier;
+    JUnit 5 + Vitest
+
+Sections modified:
+  - Technology & Configuration Constraints: Java 17 / Spring Boot 4.1.x / Maven Wrapper;
+    Node 24 / React 19 / Vite; ports 8080 and 5173; app.cors.allowed-origins; VITE_API_BASE_URL
+  - Development Workflow & Quality Gates: Vite template cleanup gate replaces Blazor demo-page gate;
+    mvnw verify + npm lint/typecheck/test/build gates
+
+Added sections: none
+Removed sections: none
+
+Stakeholder documents updated alongside this amendment:
+  - StakeholderDocuments/TechStack.md rewritten for Spring Boot + React/Vite
+  - StakeholderDocuments/ProjectGoals.md and AppFeatures.md: .NET-specific lines replaced
+
+Dependent artifacts requiring regeneration:
+  - specs/001-subscription-management/plan.md, research.md, data-model.md, contracts/,
+    quickstart.md, tasks.md (all .NET-specific) — regenerate via /speckit-plan + /speckit-tasks
+  - specs/001-subscription-management/spec.md — technology-agnostic; no change required
+
+Deferred TODOs: none
+-->
+
 # RSS Feed Reader Constitution
 
 ## Core Principles
@@ -10,15 +51,15 @@ Every feature, spec, and task MUST declare which delivery phase it belongs to, a
 - **MVP**: add a subscription by URL; display the subscription list. Nothing else.
 - **Extended-MVP**: manual refresh, item display (title + link), a single generic
   "Failed to load feed" error.
-- **Post-MVP**: persistence (EF Core + SQLite), removal, polling, sanitized HTML, etc.
+- **Post-MVP**: persistence (Spring Data JPA), removal, polling, sanitized HTML, etc.
 
 Rules:
 
 - Work for a later phase MUST NOT start until the current phase's "working" definition is met
   and verified end-to-end in the browser.
-- MVP code MUST NOT reference `HttpClient` for feed fetching, `System.ServiceModel.Syndication`,
-  EF Core, or any background service. Adding a package or dependency MUST be traceable to a
-  requirement of the current phase.
+- MVP code MUST NOT use `RestClient`, `WebClient`, `java.net.http.HttpClient` or any other
+  outbound HTTP client, ROME, Spring Data/JPA, or `@Scheduled`/background tasks. Every Maven
+  dependency and npm package MUST be traceable to a requirement of the current phase.
 - Speculative abstractions are forbidden unless Principle IV explicitly requires them.
 
 **Rationale**: The project is a fast proof-of-concept. Scope creep is the primary risk to
@@ -28,20 +69,24 @@ delivery, and phase labels make every review question ("is this in scope?") answ
 
 Subscription URLs typed by the user and all content returned by remote feeds are untrusted.
 
-- The backend MUST reject a subscription URL that is empty/whitespace, longer than 2048
-  characters, or not an absolute URI with scheme `http` or `https` (`Uri.TryCreate` with
-  `UriKind.Absolute` plus an explicit scheme check). This is a structural safety guard, not
-  feed validation: the app still MUST NOT check whether the URL is a real RSS/Atom feed in MVP.
-- Rejected input MUST return HTTP 400 with a short `ProblemDetails` message; the UI MUST show
-  that message and MUST NOT add the entry to the list.
-- All user- and feed-derived text MUST be rendered through Razor's default HTML encoding.
-  `MarkupString`, `@((MarkupString)...)`, and `innerHTML` via JS interop are FORBIDDEN until a
-  post-MVP feature introduces `HtmlSanitizer` and a spec explicitly approves its use.
+- The backend MUST reject a subscription URL that is empty/blank, longer than 2048 characters,
+  or not an absolute URI with scheme `http` or `https` (case-insensitive) and a non-empty host
+  (parsed leniently, as a browser would, so that unencoded characters such as `<` in a query
+  do not cause rejection). This is a structural safety guard, not feed validation: the app still MUST
+  NOT check whether the URL is a real RSS/Atom feed in MVP.
+- Rejected input MUST return HTTP 400 as an RFC 9457 `ProblemDetail`; the UI MUST show its
+  message and MUST NOT add the entry to the list.
+- The frontend MUST render all user- and feed-derived text through React's default JSX
+  escaping. `dangerouslySetInnerHTML`, direct `innerHTML`/`outerHTML` assignment, and
+  `eval`-like APIs are FORBIDDEN until a post-MVP feature introduces a sanitizer (e.g.
+  DOMPurify) and a spec explicitly approves its use.
 - Any URL rendered as an `href` (subscription or feed item link) MUST be re-checked for an
-  `http`/`https` scheme at render time; anything else (e.g. `javascript:`, `data:`) MUST be
-  shown as plain text. External links MUST use `target="_blank" rel="noopener noreferrer"`.
-- Error responses MUST NOT expose exception messages, stack traces, or internal paths to the
-  client. Details go to server-side logs only.
+  `http:`/`https:` protocol at render time (via `new URL(...)`); anything else MUST be shown as
+  plain text. External links MUST use `target="_blank" rel="noopener noreferrer"`.
+- Error responses MUST NOT expose exception messages, stack traces, or internal paths. The
+  backend MUST set `server.error.include-stacktrace=never`,
+  `server.error.include-message=never`, and handle unexpected exceptions in a
+  `@RestControllerAdvice` that logs server-side and returns a generic `ProblemDetail`.
 
 **Rationale**: A stored `javascript:` URL rendered as a link is stored XSS, even in a
 single-user app, and Extended-MVP will render remote content we do not control.
@@ -50,98 +95,132 @@ single-user app, and Extended-MVP will render remote content we do not control.
 
 When the backend fetches feeds, it acts on user-supplied URLs and parses remote XML.
 
-- `HttpClient` MUST be obtained through `IHttpClientFactory` (typed or named client); creating
-  `new HttpClient()` per request is forbidden.
-- Every fetch MUST have an explicit timeout (default 10 seconds) and a maximum response size
-  (default 5 MB) enforced while reading the stream, and MUST honor the request's
-  `CancellationToken`.
-- Redirects MUST be limited (max 5) and the final URI MUST still be `http`/`https`.
-- XML MUST be read with `XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit,
-  XmlResolver = null }` before passing to `SyndicationFeed.Load`, to prevent XXE and
+- HTTP calls MUST use Spring's `RestClient`, built from the injected, auto-configured
+  `RestClient.Builder` (one shared, configured client bean); constructing ad-hoc clients per
+  request is forbidden.
+- Every fetch MUST have explicit connect and read timeouts (default 10 seconds each) and a
+  maximum response size (default 5 MB) enforced while reading the body stream (e.g. a bounded
+  `InputStream`), never by buffering the whole body first.
+- Automatic redirects MUST be disabled; redirects are followed manually up to 5 hops, and every
+  hop's target MUST still be `http`/`https`.
+- XML MUST be parsed with doctype declarations disallowed: ROME's `SyndFeedInput` with
+  `allowDoctypes` left `false` (its secure default), or, for any direct JAXP use, a
+  `DocumentBuilderFactory`/`XMLInputFactory` with `disallow-doctype-decl` enabled, external
+  entities disabled, and `FEATURE_SECURE_PROCESSING` on. This prevents XXE and
   entity-expansion attacks.
 - Fetches to loopback, link-local, and private address ranges SHOULD be blocked; this becomes
   MUST before the app is ever hosted anywhere other than the developer's own machine.
 - Only feed item title and link are surfaced in Extended-MVP; item bodies MUST NOT be rendered.
 
 **Rationale**: Unbounded fetching of arbitrary URLs is the classic SSRF and resource-exhaustion
-vector, and default XML parsing settings are an avoidable XXE risk.
+vector, and permissive XML parser defaults are an avoidable XXE risk.
 
 ### IV. Swappable Boundaries Between UI, API, and Storage
 
 The architecture MUST allow persistence and feed operations to be added without a rewrite.
 
-- The backend (`backend/RSSFeedReader.Api`) is the single source of truth for subscriptions.
-  The Blazor WebAssembly UI (`frontend/RSSFeedReader.UI`) MUST NOT hold an authoritative copy;
-  after a successful add it MUST reflect the list returned by the API.
-- All UI ↔ API communication MUST go through versionless JSON endpoints under `/api/`
-  (e.g. `GET /api/subscriptions`, `POST /api/subscriptions`) using request/response DTOs.
-  Domain or storage types MUST NOT be serialized directly.
-- Storage MUST sit behind an interface (e.g. `ISubscriptionStore`) registered in DI. The MVP
-  in-memory implementation MUST be registered as a singleton and MUST be thread-safe (`lock`
-  or concurrent collection — a bare `List<T>` is not acceptable), because ASP.NET Core serves
-  requests concurrently.
-- Feed fetching/parsing (Extended-MVP) MUST live in a dedicated service (e.g. `IFeedService`),
-  not in endpoint handlers or Razor components.
-- Razor components MUST contain only UI state and event handling; API calls MUST go through an
-  injected client service, not raw `HttpClient` calls scattered across components.
+- The Spring Boot backend (`backend/`) is the single source of truth for subscriptions. The
+  React frontend (`frontend/`) MUST NOT hold an authoritative copy; after a successful add it
+  MUST reflect the list returned by the API.
+- All UI ↔ API communication MUST go through JSON endpoints under `/api/`
+  (e.g. `GET /api/subscriptions`, `POST /api/subscriptions`) using request/response DTOs
+  (Java `record`s). Domain or storage types MUST NOT be serialized directly.
+- Storage MUST sit behind an interface (e.g. `SubscriptionStore`) implemented by a Spring
+  singleton bean. The MVP in-memory implementation MUST be thread-safe (a lock or concurrent
+  collection guarding check-then-act operations — an unguarded `ArrayList` is not acceptable),
+  because Spring MVC serves requests concurrently.
+- Controllers MUST be thin: validation and business rules live in plain, unit-testable classes
+  (e.g. a validator and a `SubscriptionService`), not in controller methods.
+- Feed fetching/parsing (Extended-MVP) MUST live in a dedicated service (e.g. `FeedService`),
+  not in controllers or React components.
+- React components MUST contain only UI state and event handling; HTTP calls MUST go through a
+  single typed API module (e.g. `src/api/subscriptionsApi.ts`), not ad-hoc `fetch` calls
+  scattered across components.
 
-**Rationale**: `TechStack.md` commits to swapping in EF Core + SQLite and `BackgroundService`
-later. Interfaces at these seams make that a registration change, not a rewrite.
+**Rationale**: `TechStack.md` commits to adding Spring Data JPA and scheduled polling later.
+Interfaces at these seams make that a bean swap, not a rewrite.
 
 ### V. Strict, Verifiable Code Quality
 
-- All projects MUST enable `<Nullable>enable</Nullable>`, `<ImplicitUsings>enable</ImplicitUsings>`,
-  and `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>`, with .NET analyzers on
-  (`<AnalysisLevel>latest-recommended</AnalysisLevel>`).
-- Code MUST pass `dotnet format --verify-no-changes`. An `.editorconfig` at the repo root is
-  the single style authority.
-- I/O MUST be async end-to-end; `.Result`, `.Wait()`, and `async void` (outside Blazor event
-  handlers) are forbidden.
-- Magic values (ports, URLs, timeouts, size limits) MUST come from configuration or named
-  constants, never inline literals.
-- xUnit tests are REQUIRED from MVP onward for security-relevant logic: the URL guard
-  (Principle II), the in-memory store's add/list behavior, and (Extended-MVP) the hardened XML
-  parsing path. Endpoint integration tests via `WebApplicationFactory` SHOULD cover each
-  `/api/` route. Broader coverage is post-MVP.
+Backend (Java):
+
+- `javac` MUST run with `-Xlint:all` and fail on warnings (`maven-compiler-plugin`
+  `failOnWarning=true`); individual lint categories may be excluded only with a recorded reason.
+- Formatting MUST be enforced by Spotless (google-java-format) and checked in the build
+  (`spotless:check` bound to `verify`).
+- Every production package MUST have a `package-info.java` annotated with JSpecify
+  `@NullMarked`; nullable values MUST be annotated `@Nullable`. NullAway enforcement SHOULD be
+  added once the build JDK is 21+.
+- Maven Enforcer MUST require the pinned Java and Maven versions and ban duplicate/conflicting
+  dependency versions.
+- Constructor injection only; field injection (`@Autowired` on fields) is forbidden.
+
+Frontend (TypeScript):
+
+- `tsconfig` MUST have `"strict": true`; `any` is forbidden except at a validated JSON
+  boundary with a comment.
+- The linter shipped by the Vite React template (currently oxlint) MUST pass with warnings
+  treated as errors (`--deny-warnings`); Prettier formatting MUST pass `--check`.
+
+Both:
+
+- Magic values (ports, URLs, timeouts, size limits, user messages) MUST come from configuration
+  or named constants, never inline literals.
+- Tests are REQUIRED from MVP onward for security-relevant logic: the URL guard
+  (Principle II), the in-memory store's add/list/duplicate behavior including concurrency
+  (JUnit 5), and the frontend API module's response-to-result mapping (Vitest). Controller
+  tests (`@WebMvcTest` + MockMvc) SHOULD cover every `/api/` route and status code. Broader
+  coverage is post-MVP.
 - Names MUST describe domain intent (`Subscription`, `FeedItem`, `AddSubscriptionRequest`);
   generic names (`Data`, `Helper`, `Manager`, `Utils`) are not allowed.
 
-**Rationale**: Compiler-enforced nullability and warnings-as-errors catch defects at build time
-at near-zero cost, keeping a fast-moving POC from accumulating hidden debt.
+**Rationale**: Build-enforced lint, formatting, and nullness rules catch defects at near-zero
+cost, keeping a fast-moving POC from accumulating hidden debt.
 
 ## Technology & Configuration Constraints
 
-- **Stack**: ASP.NET Core Web API backend + Blazor WebAssembly frontend, both C#. The .NET SDK
-  version MUST be pinned in a root `global.json`. Approved libraries by phase: none extra for
-  MVP; `System.ServiceModel.Syndication` for Extended-MVP; EF Core + SQLite, `HtmlSanitizer`,
-  `HtmlAgilityPack` only in post-MVP features whose spec names them.
-- **Layout**: `backend/RSSFeedReader.Api/`, `frontend/RSSFeedReader.UI/`, and test projects
-  under `tests/`. All projects MUST be referenced from a single solution file.
-- **Ports & origins**: backend `http://localhost:5151`, frontend `http://localhost:5213`
-  (HTTPS `https://localhost:7025`), defined in each project's `launchSettings.json`.
-- **Frontend API URL**: MUST be read from `wwwroot/appsettings.json` key `ApiBaseUrl`; it MUST
-  NOT be hardcoded in components or services.
-- **CORS**: MUST list explicit frontend origins read from backend configuration
-  (e.g. `Cors:AllowedOrigins`). `AllowAnyOrigin()` is forbidden, as is `AllowCredentials()`
-  unless a spec requires it.
-- **Secrets**: none are needed for MVP/Extended-MVP. If any are introduced, they MUST use
-  user-secrets or environment variables and MUST NOT be committed.
-- **Platforms**: the app MUST build and run on Windows, macOS, and Linux; scripts and paths
-  MUST NOT assume a single OS (use `Path.Combine`, no drive letters).
+- **Stack**: Spring Boot 4.1.x on Java 17 (LTS) backend; React 19 + TypeScript + Vite frontend
+  on Node.js 24 (LTS). Backend builds MUST use the committed Maven Wrapper (`mvnw`); the Java
+  release is pinned via `<java.version>` and Maven Enforcer. The Node version is pinned in
+  `frontend/.nvmrc` and `package.json` `engines`.
+- **Approved dependencies by phase**:
+  - MVP backend: the Spring MVC web starter and its matching test starter(s) (test scope), as
+    generated by start.spring.io for "Spring Web". Build plugins: compiler, Spotless, Enforcer.
+  - MVP frontend: React, React DOM, the Vite React template's dev toolchain (TypeScript,
+    oxlint, `@vitejs/plugin-react`), Prettier, Vitest. No router, state library, or UI kit.
+  - Extended-MVP: ROME. Post-MVP: Spring Data JPA, OWASP Java HTML Sanitizer, DOMPurify,
+    jsoup — only in features whose spec names them.
+- **Layout**: `backend/` (single Maven module, package root `com.rssfeedreader`) and
+  `frontend/` (Vite app). Backend tests follow Maven convention under `backend/src/test/java`;
+  frontend tests are colocated as `*.test.ts(x)`.
+- **Ports & origins**: backend `http://localhost:8080` (`server.port` in
+  `application.yml`); frontend `http://localhost:5173` (`vite.config.ts`, `strictPort: true`).
+- **Frontend API URL**: MUST be read from `import.meta.env.VITE_API_BASE_URL` (defined in
+  `frontend/.env`); a missing value MUST fail fast, never fall back to a hardcoded URL.
+- **CORS**: MUST list explicit frontend origins from `app.cors.allowed-origins`, applied to
+  `/api/**` only via a `WebMvcConfigurer`. `allowedOrigins("*")`, `allowedOriginPatterns("*")`,
+  and `allowCredentials(true)` are forbidden unless a spec requires them.
+- **Secrets**: none are needed for MVP/Extended-MVP. If any are introduced, they MUST come from
+  environment variables (never committed `.env` values for secrets); `frontend/.env` may hold
+  only non-secret `VITE_*` settings, since everything in it ships to the browser.
+- **Platforms**: the app MUST build and run on Windows, macOS, and Linux; use `mvnw`/`mvnw.cmd`
+  and npm scripts, never shell-specific build steps.
 
 ## Development Workflow & Quality Gates
 
-1. **Template cleanup gate (Phase 2, blocking)**: before any UI feature work, `Home.razor`,
-   `Counter.razor`, and `Weather.razor` MUST be deleted, `NavMenu.razor` updated, and exactly
-   one page may declare `@page "/"`. Verify by listing `Pages/*.razor`, then
-   `dotnet clean` + `dotnet build` + run, and confirm no "ambiguous route" error in the browser
-   console.
-2. **Build gate**: `dotnet build` of the solution MUST succeed with zero warnings, and
-   `dotnet format --verify-no-changes` MUST pass.
-3. **Test gate**: `dotnet test` MUST pass, including the tests mandated by Principle V.
+1. **Template cleanup gate (Phase 2, blocking)**: before any UI feature work, the Vite template
+   demo (counter, "Get started" hero, documentation/social links), its images
+   (`src/assets/*`, `public/icons.svg`), template CSS, and template README MUST be removed and
+   `index.html` retitled. Verify that a case-insensitive search of `frontend/src` and
+   `frontend/index.html` for `count is|get started|hero.png|react.svg|vite.svg|icons.svg`
+   returns no matches, then `npm run build` and a browser check showing no console errors.
+2. **Backend gate**: `./mvnw verify` MUST succeed — compile with zero warnings, Spotless check,
+   Enforcer rules, and all tests.
+3. **Frontend gate**: `npm run lint` (zero warnings), `npm run format:check`, `npm run typecheck`,
+   `npm test` (Vitest, run mode), and `npm run build` MUST all pass.
 4. **Run gate** (from `ProjectGoals.md` local checklist): backend listens on its configured
-   port; frontend loads; `ApiBaseUrl` matches the backend; CORS allows the frontend origin;
-   browser DevTools shows no connection or CORS errors.
+   port; frontend loads; `VITE_API_BASE_URL` matches the backend; CORS allows the frontend
+   origin; browser DevTools shows no connection or CORS errors.
 5. **Phase acceptance**: MVP is accepted only when a pasted URL appears in the list without a
    page reload. Extended-MVP is accepted only when refreshing
    `https://devblogs.microsoft.com/dotnet/feed/` displays item titles as working links, and an
@@ -160,11 +239,12 @@ at near-zero cost, keeping a fast-moving POC from accumulating hidden debt.
 - **Amendments** require: a written change describing the motivation, an updated Sync Impact
   Report, a version bump, and a review of dependent Spec Kit templates for consistency.
 - **Versioning** follows semantic versioning:
-  - MAJOR: removing or redefining a principle in a backward-incompatible way.
+  - MAJOR: removing or redefining a principle in a backward-incompatible way (including a
+    technology-stack change that redefines mandated mechanics).
   - MINOR: adding a principle or section, or materially expanding guidance.
   - PATCH: clarifications, wording, or typo fixes with no change in meaning.
 - **Compliance review**: at each phase boundary (MVP → Extended-MVP → Post-MVP), the team MUST
   re-read this constitution and confirm the phase-specific rules (Principles I and III) still
   match the stakeholder documents.
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-23
+**Version**: 2.0.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-24
